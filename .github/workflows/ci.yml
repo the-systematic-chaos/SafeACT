@@ -10,6 +10,7 @@ jobs:
   build-lfc:
     name: "Build lfc"
     runs-on: ubuntu-24.04
+    environment: physical-ci
     steps:
       - name: Check out lingua-franca
         uses: actions/checkout@v4

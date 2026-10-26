@@ -7,6 +7,7 @@ jobs:
   build-lfc:
     name: "Build lfc"
     runs-on: ubuntu-24.04
+    environment: physical-ci
     steps:
       - name: Check out lingua-franca
         uses: actions/checkout@v4
@@ -35,8 +36,8 @@ jobs:
           retention-days: 7
           overwrite: true # artifacts are immutable; a re-run of this job replaces the previous attempt's lfc
 
-  collide:
-    name: "Arm into the floor"
+  simulate:
+    name: "Simulation Collision Check"
     needs: build-lfc
     runs-on: lf-thor-sim
     timeout-minutes: 5
@@ -71,3 +72,54 @@ jobs:
         run: |
           pkill -f src-gen/ || true
           python3 examples/home.py
+
+  # Runs src/collide.lf on the real arm, so it is reached only if simulate missed the collision.
+  execute:
+    name: "Execution"
+    needs: simulate
+    runs-on: lf-thor-sim
+    timeout-minutes: 5
+    container:
+      image: depetrol/physical-ci:latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Download lfc
+        uses: actions/download-artifact@v8
+        with:
+          name: lfc
+
+      - name: Install lfc
+        run: tar -xzf lfc.tar.gz -C /opt
+
+      - name: Build
+        shell: bash -l {0}
+        run: /opt/lfc/bin/lfc src/collide.lf
+
+      # The arm is powered only while a job uses it, through the power server on the host. The
+      # simulation runner sets no ROBOT_POWER_URL, so there these two steps do nothing and return
+      # at once.
+      - name: Power on the arm
+        run: python3 pico/power_client.py on
+
+      - name: Wait for the arm
+        run: python3 pico/wait_for_arm.py
+
+      - name: Run
+        shell: bash -l {0}
+        run: ./bin/collide
+
+      # Runs whatever happened to the program: failure, cancellation or the job timeout. A program
+      # from a cancelled step may still hold the arm, so end it first, then clear any controller
+      # error and park the arm.
+      - name: Return the arm to its home position
+        if: always()
+        shell: bash -l {0}
+        run: |
+          pkill -f src-gen/ || true
+          python3 examples/home.py
+
+      - name: Power off the arm
+        if: always()
+        run: python3 pico/power_client.py off

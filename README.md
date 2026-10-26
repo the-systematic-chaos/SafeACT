@@ -105,7 +105,7 @@ On the robot host the full simulation (`simulation/simulation.py`, see CI/CD) ru
 
 ## CI/CD
 
-`ci.yml` — Manual-dispatch pipeline that compiles `src/parallel.lf` and runs the binary in two stages, as two jobs with identical steps. A `build-lfc` job first builds `lfc` from lingua-franca's default branch and uploads it as the `lfc` artifact; the two stages install it into the job image. The program only knows the arm at `ROBOT_HOST` and the numpad server at `NUMPAD_SERVER_HOST`, set per runner in its job template (`arc-job-templates.yaml`); whether those are real or simulated is decided outside the container.
+`ci.yml` — Manual-dispatch pipeline that compiles `src/parallel.lf` and runs the binary in two stages, as two jobs with identical steps. A `build-lfc` job first builds `lfc` from lingua-franca's default branch and uploads it as the `lfc` artifact; the two stages install it into the job image. `build-lfc` uses physical-ci's `physical-ci` environment, so each run waits for approval like a run of `lf-pr.yml` (see Testing lingua-franca pull requests). The program only knows the arm at `ROBOT_HOST` and the numpad server at `NUMPAD_SERVER_HOST`, set per runner in its job template (`arc-job-templates.yaml`); whether those are real or simulated is decided outside the container.
 
 1. `simulate` — runs against `simulation/simulation.py`, which serves the simulated arm, a simulated numpad server that reports a key whenever the simulated gripper touches it, and collision detection: if the arm touches anything but a key, or presses a key harder than 10 N (`--max-press-force`), the simulated controller faults. The driver in the program then raises, the program exits non-zero and the job fails, exactly as a hardware fault would. The reason is in the simulator's log.
 2. `execute` (only after stage 1 passes) — passes if the program exits cleanly, i.e. every key the robot pressed was verified through the numpad server. It runs on the `lf-thor-widowx` runner, which drives the real arm and verifies through `numpad_server.py` on that host.
@@ -126,7 +126,7 @@ lfc-dev src/parallel.lf
 ROBOT_HOST=127.0.0.1 NUMPAD_SERVER_HOST=127.0.0.1 ./bin/parallel
 ```
 
-`collide.yml` — Manual-dispatch check of the collision detection itself. Builds `lfc` like `ci.yml`, then runs `src/collide.lf`, which drives the gripper into the floor, on the simulation runner; the job fails when the simulation faults the controller on the collision.
+`collide.yml` — Manual-dispatch check of the collision detection itself. It has the same jobs as `ci.yml`, including the approval, but runs `src/collide.lf`, which drives the gripper into the floor. The expected result is a failed `simulate` job, because the simulation faults the controller on the collision, and a skipped `execute` job. If the simulation misses the collision, `execute` runs `src/collide.lf` on the real arm.
 
 `lf-pr.yml` — Reusable workflow that tests a lingua-franca pull request on this hardware. lingua-franca's `physical-ci.yml` calls it when a pull request is labeled `physical-ci`, and again on each new commit while the label is present. It runs in lingua-franca's context: `build-lfc` checks out the pull request's merge commit, builds `lfc` with `./gradlew :cli:lfc:installDist`, and uploads it as the `lfc` artifact. `simulate` and `execute` install that `lfc` into the job image and run the same steps as `ci.yml`, so results appear as checks on the pull request.
 
@@ -135,7 +135,7 @@ ROBOT_HOST=127.0.0.1 NUMPAD_SERVER_HOST=127.0.0.1 ./bin/parallel
 These settings make the cross-repository call possible and gate runs from pull requests:
 
 - **physical-ci is public.** A public repository such as lingua-franca can only call reusable workflows from public repositories.
-- **lingua-franca and physical-ci each have a `physical-ci` environment whose required reviewer is the [`physical-ci-approvers`](https://github.com/orgs/lf-lang/teams/physical-ci-approvers) team.** `build-lfc` uses the environment, so a team member approves every run of `lf-pr.yml` before code from the pull request is built or run. To let someone else approve runs, add them to the team. Create both before `physical-ci.yml` lands: GitHub creates a missing environment without protection.
+- **lingua-franca and physical-ci each have a `physical-ci` environment whose required reviewer is the [`physical-ci-approvers`](https://github.com/orgs/lf-lang/teams/physical-ci-approvers) team.** `build-lfc` uses the environment, so a team member approves every run of `lf-pr.yml` before code from the pull request is built or run. `ci.yml` and `collide.yml` use physical-ci's environment in the same way. To let someone else approve runs, add them to the team. Create both before `physical-ci.yml` lands: GitHub creates a missing environment without protection.
 - **lingua-franca requires approval to run workflows from all external contributors.** The runners are in the organization's Default group, which every lf-lang repository can use, so a pull request from a fork could add its own job with `runs-on: lf-thor-widowx`. This approval setting is what stops such a job from running unreviewed.
 - **lingua-franca has a `physical-ci` label.**
 

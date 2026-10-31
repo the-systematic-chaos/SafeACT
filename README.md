@@ -1,13 +1,16 @@
 # SafeACT
 
-SafeACT brings together two hardware-in-the-loop CI systems for [Lingua Franca](https://www.lf-lang.org/) (LF). Each one lives in its own directory and is operated separately:
+SafeACT brings together two hardware-in-the-loop CI systems for [Lingua Franca](https://www.lf-lang.org/) (LF), plus a GitHub App that limits how many Actions jobs each person can use. Each one lives in its own directory and is operated separately:
 
-| Directory | Origin | What it tests | Hardware |
-|-----------|--------|---------------|----------|
-| [`physical-ci/`](physical-ci/) | [lf-lang/physical-ci](https://github.com/lf-lang/physical-ci) | An LF program drives a robot arm that presses numpad keys; each key press is verified | WidowX arm, USB numpad, Raspberry Pi Pico W power relay |
-| [`act-lf-testbed/`](act-lf-testbed/) | [lf-lang/act-lf-testbed](https://github.com/lf-lang/act-lf-testbed) | LF programs are flashed to a robot and its LED, motors, IMU and bump sensor are measured with a camera | Pololu 3pi+ 2040 robot, camera |
+| Directory | What it does | Hardware |
+|-----------|--------------|----------|
+| [`physical-ci/`](physical-ci/) | An LF program drives a robot arm that presses numpad keys; each key press is verified | WidowX arm, USB numpad, Raspberry Pi Pico W power relay |
+| [`act-lf-testbed/`](act-lf-testbed/) | LF programs are flashed to a robot and its LED, motors, IMU and bump sensor are measured with a camera | Pololu 3pi+ 2040 robot, camera |
+| [`actions-job-limiter/`](actions-job-limiter/) | Caps how many Actions jobs each person can have queued or running across the organization, and logs who ran what | None (a Node.js service) |
 
-This file covers how to set up and run both systems. The full reference for each is in its own README: [physical-ci/README.md](physical-ci/README.md), [act-lf-testbed/README.md](act-lf-testbed/README.md) and [act-lf-testbed/docs/writing-tests.md](act-lf-testbed/docs/writing-tests.md).
+`physical-ci/` comes from [lf-lang/physical-ci](https://github.com/lf-lang/physical-ci) and `act-lf-testbed/` from [lf-lang/act-lf-testbed](https://github.com/lf-lang/act-lf-testbed). `actions-job-limiter/` was copied in as plain files and has no imported history.
+
+This file covers how to set up and run all three. The full reference for each is in its own README: [physical-ci/README.md](physical-ci/README.md), [act-lf-testbed/README.md](act-lf-testbed/README.md) (with [act-lf-testbed/docs/writing-tests.md](act-lf-testbed/docs/writing-tests.md)) and [actions-job-limiter/README.md](actions-job-limiter/README.md).
 
 ---
 
@@ -18,7 +21,8 @@ SafeACT/
 ├── .github/workflows/   Workflows of both projects (see the table below)
 ├── .gitmodules          Registers act-lf-testbed/lf-3pi-template
 ├── physical-ci/         Robot-arm numpad CI
-└── act-lf-testbed/      ACT test suite for the Pololu 3pi+
+├── act-lf-testbed/      ACT test suite for the Pololu 3pi+
+└── actions-job-limiter/ GitHub App: per-person job limit and run log
 ```
 
 GitHub Actions only reads workflows from the root `.github/workflows/`, so both projects' workflows are kept there under their original names:
@@ -32,7 +36,7 @@ GitHub Actions only reads workflows from the root `.github/workflows/`, so both 
 | act-lf-testbed | `act-lf-led.yml`, `act-lf-motor.yml`, `act-lf-imu.yml`, `act-lf-bump.yml` | Reusable, one per hardware module |
 | act-lf-testbed | `act-lf-cross-workflow.yml`, `act-lf-led_cross.yml` | Reusable, for cross-repository testing |
 | act-lf-testbed | `act-lfdev-cross-workflow.yml`, `act-lfdev-led.yml`, `act-lfdev-led_rpi.yml`, `act-lfdev-motor_rpi.yml` | Reusable, tests a lingua-franca dev build |
-| act-lf-testbed | `build-image.yml` | Daily at 06:00 UTC, manual dispatch, or reusable |
+| act-lf-testbed | `build-image.yml` | None: every trigger is commented out, so the workflow is disabled |
 
 > **Paths not yet updated.** The workflow files are exact copies of the originals, so they still use paths from the original repositories (for example `src/parallel.lf` rather than `physical-ci/src/parallel.lf`, and checkouts of `lf-lang/physical-ci` or `lf-lang/act-lf-testbed`). They need updating before they will run correctly from SafeACT.
 
@@ -351,7 +355,14 @@ The original documentation points this at `lf-lang/act-lf-testbed`. To use the c
 
 ### 2.5 The dev image
 
-The `act-lfdev-*` workflows run `lfc` and the analysis scripts inside the `act-lf:act-lf-test-docker` image. `build-image.yml` builds that image for `linux/arm64` from `docker/Dockerfile.act-lf-dev` and publishes it as the `docker-image` artifact. The workflow runs daily at 06:00 UTC, can be started manually from the Actions tab, and only builds on `main`.
+The `act-lfdev-*` workflows run `lfc` and the analysis scripts inside the `act-lf:act-lf-test-docker` image. `build-image.yml` builds that image for `linux/arm64` from `docker/Dockerfile.act-lf-dev` and publishes it as the `docker-image` artifact. It only builds on `main`.
+
+In SafeACT, every trigger in `build-image.yml` (`workflow_call`, the daily `schedule` and `workflow_dispatch`) is commented out, so the workflow does not run and no fresh `docker-image` artifact is produced. To build the image, uncomment the trigger you need, or build it locally from `act-lf-testbed/`:
+
+```bash
+docker buildx build --platform linux/arm64 -f docker/Dockerfile.act-lf-dev \
+    -t act-lf:act-lf-test-docker --load .
+```
 
 Using the image locally:
 
@@ -371,7 +382,99 @@ See [act-lf-testbed/docs/writing-tests.md](act-lf-testbed/docs/writing-tests.md)
 
 ---
 
-## Quick comparison
+## Part 3: actions-job-limiter
+
+A small GitHub App with no dependencies (Node.js 20.6 or later). It caps how many GitHub Actions jobs each person can have queued or running at once across the organization, and keeps a log of who ran what, from which repo and branch, and when.
+
+Both hardware systems expose reusable workflows that other repositories call from pull requests, and each runs on a single robot. The limiter can be pointed at those workflows so that no one person fills the queue. It is not wired into any SafeACT workflow; it runs as a separate service.
+
+### 3.1 How it works
+
+- **Jobs are charged to whoever triggered the run:** the person who pushed, opened the pull request, dispatched the workflow, or clicked re-run. The count spans every repository in the organization.
+- **Only some workflows are watched.** If `TARGET_WORKFLOWS` is set, only runs that are, or call, one of those workflows are counted, limited and logged. The match works at any branch, tag or SHA, so callers can't avoid it by pinning.
+- **Whole runs are cancelled.** GitHub cannot cancel single jobs. When the limiter cancels a run, it posts a **Job limit** check on the commit explaining why.
+- **Two modes:**
+  - `MODE=soft` (the default) checks each run once, when its first job is queued, and never cancels work in progress.
+  - `MODE=hard` checks every job, so no one can exceed the limit.
+- **Environment approvals:** jobs waiting on an environment approval don't count until they start. This matters for physical-ci, whose jobs wait in the `physical-ci` environment.
+
+A reusable workflow runs as part of the *calling* repository's run. So the app must be installed on the repositories that call the workflow, not only on the repository that hosts it.
+
+### 3.2 Set up
+
+1. **Create the GitHub App** under the organization's **Settings → Developer settings → GitHub Apps → New GitHub App**:
+   - **Webhook URL:** where the limiter will run, ending in `/webhook`. **Webhook secret:** a long random string.
+   - **Repository permissions:** Actions: *Read and write*. Checks: *Read and write* (optional, used for the explanation check).
+   - **Subscribe to events:** *Workflow job* and *Workflow run*.
+   - **Where can this GitHub App be installed:** *Only on this account*.
+2. **Generate a private key** on the app's settings page and note the App ID.
+3. **Install the app** on the organization, with access to all repositories or at least every repository that calls the watched workflows.
+4. **Configure and start it** somewhere GitHub can reach:
+
+   ```bash
+   cd actions-job-limiter
+   cp .env.example .env   # set the app ID, key path, webhook secret, TARGET_WORKFLOWS and ADMIN_TOKEN
+   npm start              # or, with the variables already set: node src/index.js
+   ```
+
+   To try it from a laptop, forward webhook deliveries through a tunnel such as [smee.io](https://smee.io).
+
+For example, to watch the SafeACT workflows that other repositories call:
+
+```bash
+TARGET_WORKFLOWS=<owner>/SafeACT/.github/workflows/lf-pr.yml,<owner>/SafeACT/.github/workflows/act-lf*-cross-workflow.yml
+```
+
+`*` matches within a single path segment. Leave `TARGET_WORKFLOWS` unset to watch every workflow.
+
+### 3.3 Roll out in dry run
+
+The app starts with `DRY_RUN=true`. It counts and logs everything and records each run it *would* cancel as `would_cancel`, but cancels nothing.
+1. Leave it running for a few days.
+2. Check `GET /runs?decision=would_cancel`.
+3. Adjust `MAX_JOBS_PER_USER` (default `5`) and `USER_LIMITS` (for example `release-captain=20,renovate[bot]=3`).
+4. Set `DRY_RUN=false`.
+
+### 3.4 Read the run log
+
+Every watched run is appended to `RUN_LOG_FILE` (default `runs.jsonl`; `.env.example` uses `./data/runs.jsonl`). Set `ADMIN_TOKEN` (at least 16 characters, e.g. `openssl rand -hex 32`) to turn on the read endpoints:
+
+```bash
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://<limiter-host>/runs                          # newest 1000 runs
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://<limiter-host>/runs?user=<login>&since=2026-10-01&format=csv" -o runs.csv
+curl -H "Authorization: Bearer $ADMIN_TOKEN" "https://<limiter-host>/runs?decision=cancelled"
+curl -H "Authorization: Bearer $ADMIN_TOKEN" https://<limiter-host>/active                        # who is using job slots now
+```
+
+`/runs` filters: `user`, `repo`, `branch`, `decision`, `since`, `until`, `limit` (default 1000, up to 100000) and `format=json|csv`. `GET /healthz` is a health check.
+
+You can also read the log on the server without the endpoints:
+
+```bash
+npm run report -- --user <login> --since 2026-10-01
+npm run report -- --repo <owner>/<repo> --format csv > runs.csv
+```
+
+Rotate the log with logrotate's `copytruncate`. The log contains usernames, branch names and pull request titles. Keep it and `ADMIN_TOKEN` private, and serve the app over HTTPS.
+
+### 3.5 Operating notes
+
+- **Run exactly one instance.** Counts are kept in memory. A restart forgets them, which fails open: people get extra room until their current jobs finish. The run log survives restarts.
+- **Missed webhooks are caught up.** Every `SWEEP_INTERVAL_SECONDS` (300), the app asks GitHub about any job or run it hasn't heard about for `STALE_AFTER_SECONDS` (900). Failed deliveries can also be redelivered from the app's **Advanced** settings.
+- **Exemptions:**
+  - Bots are exempt by default (`EXEMPT_BOTS=true`).
+  - Scheduled runs are exempt by default (`EXEMPT_EVENTS=schedule`).
+  - `EXEMPT_ACTORS` lists people who are never limited.
+  - Exempt runs are still logged.
+- **When in doubt, the run goes ahead.** If the app can't tell who started a run, or GitHub refuses the cancel, the run is let through and the reason is logged.
+- **Guard the private key.** With Actions write access, the app can cancel any run in any repository it is installed on.
+- **Tests:** run `npm test` from `actions-job-limiter/`.
+
+The full list of environment variables is in [actions-job-limiter/README.md](actions-job-limiter/README.md#configuration).
+
+---
+
+## Quick comparison of the hardware systems
 
 | | physical-ci | act-lf-testbed |
 |---|---|---|

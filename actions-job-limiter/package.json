@@ -1,0 +1,17 @@
+{
+  "name": "actions-job-limiter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub App that caps how many GitHub Actions jobs each person can have queued or running across an organization, for all workflows or just the ones you choose, and logs who ran what, on which branch, and when.",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "start": "node --env-file=.env src/index.js",
+    "report": "node src/report.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT"
+}

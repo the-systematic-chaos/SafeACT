@@ -12,12 +12,12 @@
 name: Image build and test
 
 on:
-  workflow_call:
+  #workflow_call:
   # Rebuild every day so a fresh docker-image artifact is always available.
-  schedule:
-    - cron: '0 6 * * *' # 06:00 UTC
+  #schedule:
+  #  - cron: '0 6 * * *' # 06:00 UTC
   # Run it by hand if the artifact is missing or a rebuild is needed now.
-  workflow_dispatch:
+  #workflow_dispatch:
 
 # One run at a time, so two quick pushes can't both build the image.
 # A newer push replaces a run that is still waiting to start.

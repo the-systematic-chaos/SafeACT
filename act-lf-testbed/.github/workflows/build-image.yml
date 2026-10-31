@@ -1,0 +1,61 @@
+# .github/workflows/image-via-artifact.yml
+#
+# No-registry alternative: export the image as a tarball on the GitHub-hosted
+# runner, pass it along as a workflow artifact, and `docker load` it on the
+# self-hosted runner.
+#
+# Useful when the self-hosted machine can't reach a registry, or the image
+# shouldn't be published anywhere. Trade-offs: the whole image is transferred
+# on every run (a registry only sends changed layers), it counts toward your
+# artifact storage, and it's one platform per tarball.
+
+name: Image build and test
+
+on:
+  workflow_call:
+  # Rebuild every day so a fresh docker-image artifact is always available.
+  schedule:
+    - cron: '0 6 * * *' # 06:00 UTC
+  # Run it by hand if the artifact is missing or a rebuild is needed now.
+  workflow_dispatch:
+
+# One run at a time, so two quick pushes can't both build the image.
+# A newer push replaces a run that is still waiting to start.
+concurrency:
+  group: ${{ github.workflow }}
+
+
+#Check the runner labels with `gh run view --log` or `gh run view --json jobs` and adjust below.
+
+env:
+  #IMAGE: myapp:${{ github.sha }}
+  IMAGE: act-lf:act-lf-test-docker 
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build and export to a tarball
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker/Dockerfile.act-lf-dev
+          tags: | 
+            ${{ env.IMAGE }}
+            act-lf:act-lf-test-docker
+          platforms: linux/arm64
+          outputs: type=docker,dest=${{ runner.temp }}/image.tar
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docker-image
+          path: ${{ runner.temp }}/image.tar
+          retention-days: 1 # rebuilt daily by the schedule above, so one day is enough.

@@ -11,6 +11,6 @@ See the README inside each directory for project-specific documentation.
 
 ## Layout notes
 
-- Both projects were imported with `git subtree`, so `git log -- physical-ci/` and `git log -- act-lf-testbed/` show each project's original history.
+- Both projects were imported with `git subtree add` (not squashed), so all original commits are part of this repository's history. Those commits use each project's original root-relative paths. To view one project's history, run `git log <import-commit>^2`, where `<import-commit>` is the "Import physical-ci …" or "Import act-lf-testbed …" commit.
 - `act-lf-testbed/lf-3pi-template` is a git submodule. It is registered in the root `.gitmodules`. Run `git submodule update --init` after cloning.
 - Each project's original workflows are kept under `<project>/.github/workflows/`. GitHub Actions only runs workflows in the repository-root `.github/workflows/`, so those files will not run from their current location.

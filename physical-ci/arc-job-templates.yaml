@@ -1,0 +1,45 @@
+# Settings merged into every job pod, one ConfigMap per runner scale set. The image comes from the
+# workflow. Which ConfigMap a runner set mounts is chosen at helm install time (see README); both use
+# host networking, so job pods see the robot's LAN and the services on the host's loopback.
+#
+# lf-thor-widowx: the real arm, numpad_server.py on 127.0.0.1, and the arm power server
+# (pico/power_server.py) that jobs switch the arm on and off through.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-template
+  namespace: arc-runners
+data:
+  content: |
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: $job
+          env:
+            - name: NUMPAD_SERVER_HOST
+              value: "127.0.0.1"
+            - name: ROBOT_HOST
+              value: "192.168.1.2"
+            - name: ROBOT_POWER_URL
+              value: "http://127.0.0.1:5200"
+---
+# lf-thor-sim: simulation.py --host 127.0.0.2, a loopback alias so that its numpad server does not
+# collide with numpad_server.py on 127.0.0.1.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-template-sim
+  namespace: arc-runners
+data:
+  content: |
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: $job
+          env:
+            - name: NUMPAD_SERVER_HOST
+              value: "127.0.0.2"
+            - name: ROBOT_HOST
+              value: "127.0.0.2"

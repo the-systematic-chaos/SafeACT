@@ -1,0 +1,26 @@
+githubConfigUrl: "https://github.com/lf-lang"
+githubConfigSecret: lf-arc-github-app # secret in arc-runners with the GitHub App ID, installation ID and private key
+containerMode:
+  type: "kubernetes" # each job runs in its own pod, from the image in the workflow's `container:`
+  kubernetesModeWorkVolumeClaim:
+    accessModes: ["ReadWriteOnce"]
+    resources:
+      requests:
+        storage: 1Gi
+template:
+  spec:
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        env:
+          - name: ACTIONS_RUNNER_CONTAINER_HOOK_TEMPLATE
+            value: /home/runner/job-template/content # job pod settings from arc-job-templates.yaml
+        volumeMounts:
+          - name: job-template
+            mountPath: /home/runner/job-template
+            readOnly: true
+    volumes:
+      - name: job-template
+        configMap:
+          name: job-template

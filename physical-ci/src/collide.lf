@@ -1,0 +1,37 @@
+target Python
+
+// Drives the gripper into the floor on purpose, to check that the simulation
+// detects a collision and faults the controller: the move into the floor
+// completes, and the driver raises on the next command, which fails the
+// program. Never run this against a real arm: the host defaults to the
+// simulator and is only overridden by ROBOT_HOST.
+
+preamble {=
+    import os
+    import numpy as np
+    import trossen_arm
+=}
+
+main reactor {
+    state driver
+
+    reaction(startup) {=
+        host = os.environ.get("ROBOT_HOST", "127.0.0.1")
+        print(f"Configuring driver to {host}")
+        self.driver = trossen_arm.TrossenArmDriver()
+        self.driver.configure(
+            trossen_arm.Model.wxai_v0,
+            trossen_arm.StandardEndEffector.wxai_v0_follower,
+            host,
+            False
+        )
+        self.driver.set_arm_modes(trossen_arm.Mode.position)
+        print("Moving to home position")
+        self.driver.set_arm_positions(np.zeros(6), 2.0, True)
+        print("Pitching the shoulder forward until the gripper hits the floor")
+        self.driver.set_arm_positions(np.array([0.0, 2.9, 0.0, 0.0, 0.0, 0.0]), 2.0, True)
+        print("Returning to home position")
+        self.driver.set_arm_positions(np.zeros(6), 2.0, True)
+        print("Collide: finished without a fault")
+    =}
+}

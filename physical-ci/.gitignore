@@ -1,0 +1,12 @@
+bin
+include
+src-gen
+fed-gen
+
+actions-runner
+
+**/__pycache__/
+
+.env
+ci.log
+*.pem

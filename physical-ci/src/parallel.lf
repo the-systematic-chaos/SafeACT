@@ -1,0 +1,97 @@
+target Python
+
+import Robot from "robot.lf"
+
+preamble {=
+    import json
+    import numpy as np
+    import random
+    import os
+    import queue
+    import threading
+    from websockets.sync.client import connect
+=}
+
+
+reactor IntegrationTest {
+    input numpad_pressed_key # str
+    input robot_pressed_key # str
+    output press_button # str
+    state current_rand_key # int
+    state iter_count # int
+
+    method generate_rand_key() {=
+        rand_key = random.randint(1, 9)
+        return rand_key
+    =}
+
+    reaction(startup) -> press_button {=
+        self.iter_count = 0
+        self.current_rand_key = self.generate_rand_key()
+        press_button.set(str(self.current_rand_key))
+    =}
+
+    reaction(numpad_pressed_key, robot_pressed_key) -> press_button {=
+        assert numpad_pressed_key.value == robot_pressed_key.value, f"Numpad and robot pressed keys do not match: {numpad_pressed_key.value} != {robot_pressed_key.value}"
+        assert int(numpad_pressed_key.value) == self.current_rand_key, "Key number does not match current random key"
+        
+        print(f"IntegrationTest: Pressing key: {self.current_rand_key}")
+
+        self.iter_count += 1
+        if self.iter_count >= 3:
+            request_stop()
+            print("IntegrationTest: Requesting stop")
+        else:
+            self.current_rand_key = self.generate_rand_key()
+            press_button.set(str(self.current_rand_key))
+    =}
+}
+
+reactor NumpadReceiver {
+    input read_numpad # str
+    output pressed_key # str
+    state websocket
+    state keys # queue.Queue of key names pushed by the numpad server
+
+    reaction(startup) {=
+        url = f"ws://{os.environ.get('NUMPAD_SERVER_HOST', 'localhost')}:5100"
+        print(f"NumpadReceiver: Connecting to numpad server at {url}")
+        self.websocket = connect(url)
+        self.keys = queue.Queue()
+
+        def listen():
+            try:
+                for key in self.websocket:
+                    self.keys.put(key)
+            finally:
+                self.keys.put(None)  # connection closed
+
+        threading.Thread(target=listen, daemon=True, name="numpad-listener").start()
+        print("NumpadReceiver: Ready")
+    =}
+
+    reaction(read_numpad) -> pressed_key {=
+        # Discard presses that arrived before this command, then wait for the next one.
+        while not self.keys.empty():
+            self.keys.get_nowait()
+        key = self.keys.get()
+        if key is None:
+            raise ConnectionError("NumpadReceiver: numpad server closed the connection")
+        print(f"NumpadReceiver: Key pressed: {key}")
+        pressed_key.set(key)
+    =}
+
+    reaction(shutdown) {=
+        self.websocket.close()
+    =}
+}
+
+main reactor {
+    robot = new Robot()
+    ci_test = new IntegrationTest()
+    numpad_receiver = new NumpadReceiver()
+    ci_test.press_button -> robot.press_button
+    ci_test.press_button -> numpad_receiver.read_numpad
+    numpad_receiver.pressed_key -> ci_test.numpad_pressed_key after 0
+    robot.pressed_key -> ci_test.robot_pressed_key after 0
+}

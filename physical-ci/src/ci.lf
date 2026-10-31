@@ -1,0 +1,72 @@
+target Python
+
+import Robot from "robot.lf"
+
+preamble {=
+    import json
+    import asyncio
+    import numpy as np
+    import random
+    import threading
+    from websockets.asyncio.client import connect
+=}
+
+
+reactor IntegrationTest {
+    input robot_pressed_key # str
+    output press_button # str
+    state current_rand_key # int
+    state iter_count # int
+    state last_pressed_key # str
+
+    physical action numpad_press
+
+    method generate_rand_key() {=
+        rand_key = random.randint(1, 9)
+        return rand_key
+    =}
+
+    reaction(startup) -> press_button, numpad_press {=
+        self.iter_count = 0
+        self.current_rand_key = self.generate_rand_key()
+        press_button.set(str(self.current_rand_key))
+
+        def run():
+            async def listen():
+                async with connect("ws://localhost:5100") as ws:
+                    print("NumpadReceiver: Connected to numpad server")
+                    async for key in ws:
+                        print(f"NumpadReceiver: Received key: {key}")
+                        numpad_press.schedule(0, key)
+            asyncio.run(listen())
+        self.listener_thread = threading.Thread(target=run, daemon=True)
+        self.listener_thread.start()
+    =}
+
+    reaction(numpad_press) {=
+        self.last_pressed_key = numpad_press.value
+        print(f"IntegrationTest: Numpad pressed key: {self.last_pressed_key}")
+    =}
+
+    reaction(robot_pressed_key) -> press_button {=
+        print(f"IntegrationTest: Robot finished pressing key: {robot_pressed_key.value}")
+        key_num = self.last_pressed_key
+        assert int(key_num) == self.current_rand_key, "Key number does not match current random key"
+        self.iter_count += 1
+        if self.iter_count >= 3:
+            request_stop()
+            print("IntegrationTest: Requesting stop")
+
+        else:
+            self.current_rand_key = self.generate_rand_key()
+            print(f"IntegrationTest: Issuing command to press key: {self.current_rand_key}")
+            press_button.set(str(self.current_rand_key))
+    =}
+}
+
+main reactor {
+    robot = new Robot()
+    integration_test = new IntegrationTest()
+    integration_test.press_button -> robot.press_button
+    robot.pressed_key ~> integration_test.robot_pressed_key
+}
